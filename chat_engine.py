@@ -1,63 +1,76 @@
-# ✅ chat_engine.py (vector search enabled + OpenAI API + smart rules)
-
+import re
 import os
-from dotenv import load_dotenv
 from openai import OpenAI
+from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 
-# Load API key from .env
 load_dotenv()
 client = OpenAI()
 api_key = os.getenv("OPENAI_API_KEY")
 
-def get_chat_response(query, vectorstore: FAISS, df=None):
-    import re
 
-    # 1. Try course code detection
-    course_code_match = re.search(r"[A-Z]{2,}-[A-Z]?\s?\d{3}", query.upper())
-    context = ""
-    rule_override = ""
+def extract_registration_time(text):
+    # Look for a time pattern like 12:15PM or 2:30PM
+    match = re.search(r"\b(1[0-2]|0?[1-9]):[0-5][0-9]\s*(AM|PM)\b", text, re.IGNORECASE)
+    return match.group(0) if match else None
 
-    if course_code_match and df is not None:
-        course_code = course_code_match.group(0).replace(" ", "")
-        matched_row = df[df["course_number"].str.upper().str.replace(" ", "") == course_code]
 
-        if not matched_row.empty:
-            course_info = matched_row.iloc[0]
-            context = course_info.to_string()
+def get_chat_response(query, vectorstore, course_df, history_df):
+    # Step 1: Semantic Retrieval
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+    relevant_docs = retriever.get_relevant_documents(query)
 
-            # Check rule manually
-            if "CSCI-A" in course_code and int(course_code[-3:]) < 500:
-                rule_override = (
-                    f"\n\n⚠️ RULE TRIGGERED: {course_code} is below 500-level and belongs to CSCI-A. "
-                    "Graduate students are NOT allowed to take this course."
+    # Step 2: Build Context
+    context = "\n\n".join(doc.page_content for doc in relevant_docs)
+
+    # Step 3: Extract registration time (optional)
+    reg_time = extract_registration_time(query)
+    time_remark = ""
+    if reg_time:
+        time_remark = f"The student’s registration time is {reg_time}. Use this to determine if they'll likely get the course."
+
+    matched_courses = []
+
+    for course_number in course_df["course_number"].unique():
+        if course_number in query:
+            matched_courses.append(course_number)
+
+    if matched_courses:
+        for course_code in matched_courses:
+            extra_row = course_df[course_df["course_number"] == course_code]
+            if not extra_row.empty:
+                course_context = "\n".join(
+                    f"{col}: {extra_row.iloc[0][col]}" for col in extra_row.columns
                 )
-        else:
-            # fallback to vector
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-            relevant_docs = retriever.get_relevant_documents(query)
-            context = "\n\n".join(doc.page_content for doc in relevant_docs)
-    else:
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-        relevant_docs = retriever.get_relevant_documents(query)
-        context = "\n\n".join(doc.page_content for doc in relevant_docs)
+                context += f"\n\n[EXACT MATCH: {course_code}]\n{course_context}"
 
-    # 2. Final system prompt
+    # Step 4: Prompt with all rules
     system_prompt = f"""
-You are a helpful university course advisor.
+You are a course advisor AI. Follow these rules strictly:
 
-Only answer based on CONTEXT below.
-NEVER make up information or suggest courses not shown in the context.
+RULES:
+- F-1 international students in their **final semester** CANNOT take fully online courses.
+- Graduate students CANNOT take CSCI-A courses below 500-level.
+- If a course is extremely popular and the student registers late (e.g., 2:30PM), they are unlikely to get it.
+- If the registration time is close to 12:15PM, chances are better.
+- Courses with high dropout rates or low waitlists are more likely to be available.
 
-Check for student type and rules:
-1. F-1 international students in their final semester CANNOT take online-only courses.
-2. Graduate students CANNOT take CSCI-A courses below 500-level.
+TASKS:
+- Recommend 2–3 courses based on interests.
+- If probability to get a course is low (due to popularity or dropouts), suggest alternatives.
+- Always include:
+  - Course Number
+  - Course Name
+  - Instructor
+  - Instruction Mode
+  - Class Time
+  - Total Slots
+  - Popularity, Dropout Rate, Waitlist Trend (if known)
 
-If a course violates a rule, clearly explain why the student CANNOT take it.
+{time_remark}
 
-CONTEXT:
+DATA CONTEXT:
 {context}
-{rule_override}
 """
 
     messages = [
@@ -68,8 +81,7 @@ CONTEXT:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
-        temperature=0.4
+        temperature=0.5
     )
 
     return response.choices[0].message.content
-

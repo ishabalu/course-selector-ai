@@ -1,5 +1,3 @@
-# ✅ data_handler.py
-
 import pandas as pd
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -10,35 +8,46 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def load_data(path):
-    df = pd.read_csv(path)
-    df.fillna("", inplace=True)
-    return df
 
-def create_vectorstore(df):
-    # Combine course details into a single text block
-    df["text"] = df.apply(lambda row: f"Course Number: {row['course_number']}\n"
-                                         f"Course Name: {row['course_name']}\n"
-                                         f"Instructor: {row['instructor']}\n"
-                                         f"Class Time: {row['class time']}\n"
-                                         f"Instruction Mode: {row['instruction mode']}\n"
-                                         f"Availability: {row['availability']}\n"
-                                         f"Description: {row['description']}\n"
-                                         f"Term: {row['term']}\n"
-                                         f"Prerequisites: {row['prerequisites']}\n"
-                                         f"Credits: {row['credits']}\n", axis=1)
+def load_data(course_path, history_path):
+    course_df = pd.read_csv(course_path)
+    history_df = pd.read_csv(history_path)
 
-    # Load docs from DataFrame
-    loader = DataFrameLoader(df, page_content_column="text")
+    course_df.fillna("", inplace=True)
+    history_df.fillna("", inplace=True)
+
+    return course_df, history_df
+
+
+def create_vectorstore(course_df):
+    # Combine important course details into a searchable text field
+    course_df["text"] = course_df.apply(lambda row: f"""
+Course Number: {row['course_number']}
+Course Name: {row['course_name']}
+Instructor: {row['instructor']}
+Class Time: {row['class time']}
+Instruction Mode: {row['instruction mode']}
+Total Slots: {row['total_slots']}
+Term: {row['term']}
+Credits: {row['credits']}
+Course Type: {row['course_type']}
+Difficulty: {row['difficulty']}
+Popularity: {row['popularity']}
+Description: {row['description']}
+Keywords: {row['keywords']}
+Prerequisites: {row['prerequisites']}
+""", axis=1)
+
+    # Load documents from the DataFrame
+    loader = DataFrameLoader(course_df, page_content_column="text")
     documents = loader.load()
 
-    # Split if needed (not always required for short rows)
+    # Optional: chunk the documents (useful for large rows)
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     split_docs = splitter.split_documents(documents)
 
-    # Create embeddings
+    # Generate vector embeddings
     embeddings = OpenAIEmbeddings()
-
-    # Vector store with FAISS
     vectorstore = FAISS.from_documents(split_docs, embeddings)
+
     return vectorstore
