@@ -1,15 +1,14 @@
-from langchain_community.chat_models import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
-from langchain.memory import ConversationBufferMemory
+import os
+import pandas as pd
+from openai import OpenAI
+from dotenv import load_dotenv
 
-def get_chat_response(vectorstore, query, memory):
-    
-    llm = ChatOpenAI(temperature=0.4, model_name="gpt-3.5-turbo")
+# Load API key from .env file
+load_dotenv()
+client = OpenAI()
 
-    
-    
-    system_template = """
+def get_chat_response(query, df):
+    system_prompt = ("""
 You are a helpful course advisor AI chatbot.
 You ONLY answer questions based on the course dataset retrieved from search (context).
 Never make up information that is not in the dataset.
@@ -23,25 +22,37 @@ For example, CSCI-A 150 is not allowed, but CSCI-A 506 is allowed.
 
 Always include course number, name, instructor, instruction mode, and availability in your response when applicable.
 Be helpful, concise, and strictly follow the eligibility rules above.
+""")
 
+    # Build dynamic context from sample data
+    sample_courses = df.sample(min(10, len(df)))
 
-"""
+    context_rows = []
+    for _, row in sample_courses.iterrows():
+        context_rows.append(
+            f"Course: {row['course_name']} ({row['course_number']})\n"
+            f"Instructor: {row['instructor']}\n"
+            f"Instruction Mode: {row['instruction mode']}\n"
+            f"Class Time: {row['class time']}\n"
+            f"Seats Available: {row['availability']}\n"
+            f"Term: {row['term']}\n"
+            f"Credits: {row['credits']}\n"
+            f"Description: {row['description']}\n"
+            f"Prerequisites: {row['prerequisites']}\n"
+            f"Career Tags: {row['career tags']}"
+        )
 
-    
-    prompt = ChatPromptTemplate.from_messages([
-    SystemMessagePromptTemplate.from_template(system_template),
-    HumanMessagePromptTemplate.from_template("Question: {question}\n\nContext:\n{context}")
-])
+    context = "\n\n---\n\n".join(context_rows)
 
-    
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        memory=memory,
-        return_source_documents=False,
-        combine_docs_chain_kwargs={"prompt": prompt}
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"The following are sample course listings:\n{context}\n\nUser: {query}"},
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages,
+        temperature=0.5
     )
 
-    
-    result = qa_chain.invoke({"question": query})
-    return result["answer"]
+    return response.choices[0].message.content
