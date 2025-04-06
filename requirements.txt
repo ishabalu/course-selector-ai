@@ -1,8 +1,9 @@
-openai
 streamlit
 streamlit-chat
-pandas
-python-dotenv
-tiktoken
+openai
 langchain
 langchain-community
+tiktoken
+python-dotenv
+pandas
+faiss-cpu
