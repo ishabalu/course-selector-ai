@@ -1,4 +1,6 @@
 streamlit
-pandas
 openai
+langchain
+pandas
+python-dotenv
 streamlit-chat
