@@ -1,6 +1,7 @@
-streamlit
-openai
 langchain
+langchain-community
+openai
+streamlit
+streamlit-chat
 pandas
 python-dotenv
-streamlit-chat
